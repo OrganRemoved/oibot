@@ -1,0 +1,15 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "OiBot"
+version  = "2025.5.20"
+dependencies = ["aiohttp", "cryptography"]
+requires-python = ">=3"
+description = "a lightweight bot framework"
+readme = "README.md"
+license = {text = "MIT License"}
+
+[tool.hatch.build.targets.wheel]
+packages = ["oibot"]
