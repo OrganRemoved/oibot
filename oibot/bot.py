@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from contextvars import ContextVar
-from functools import _make_key, wraps
+from functools import _make_key
 from os import environ
 from typing import (
     Any,
@@ -30,59 +30,39 @@ class AccessToken(TypedDict):
     expires_in: int
 
 
-def singleflight(typed: bool = False) -> Callable[..., Callable[..., Awaitable[Any]]]:
-    def decorator(func: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
-        futures: WeakValueDictionary[Hashable, asyncio.Future] = WeakValueDictionary()
-
-        @wraps(func)
-        async def warpper(*args, **kwargs) -> Any:
-            key = _make_key(args, kwargs, typed=typed)
-
-            if future := futures.get(key):
-                result = await future
-
-                if exception := future.exception():
-                    raise exception
-
-                return result
-
-            futures[key] = future = asyncio.Future()
-
-            try:
-                result = await func(*args, **kwargs)
-                future.set_result(result)
-                return result
-
-            except Exception as e:
-                future.set_exception(e)
-                raise e
-
-        return warpper
-
-    return decorator
-
-
 def keep_alive(
-    func: Callable[[str, str], Awaitable[AccessToken]],
-) -> Callable[[str, str], Awaitable[AccessToken]]:
-    cache: dict[tuple[str, str], AccessToken] = {}
+    func: Callable[..., Awaitable[AccessToken]],
+) -> Callable[..., Awaitable[AccessToken]]:
+    cache: dict[Hashable, AccessToken] = {}
+    inflight: WeakValueDictionary[Hashable, asyncio.Future] = WeakValueDictionary()
 
     async def decorator(app_id: str, client_secret: str) -> AccessToken:
-        key = (app_id, client_secret)
+        key = _make_key((app_id, client_secret), {}, typed=False)
 
-        if not (access_token := cache.get(key)):
-            cache[key] = access_token = await func(app_id, client_secret)
+        if access_token := cache.get(key):
+            return access_token
 
-            asyncio.get_running_loop().call_later(
-                int(access_token["expires_in"]) - 30, cache.pop, key, None
-            )
+        if future := inflight.get(key):
+            result = await future
+
+            if exception := future.exception():
+                raise exception
+
+            return result
+
+        inflight[key] = future = asyncio.get_running_loop().create_future()
+        cache[key] = access_token = await func(app_id, client_secret)
+        future.set_result(access_token)
+
+        asyncio.get_running_loop().call_later(
+            int(access_token["expires_in"]) - 30, cache.pop, key, None
+        )
 
         return access_token
 
     return decorator
 
 
-@singleflight(typed=False)
 @keep_alive
 async def get_app_access_token(app_id: str, client_secret: str) -> AccessToken:
     async with ClientSession() as session:

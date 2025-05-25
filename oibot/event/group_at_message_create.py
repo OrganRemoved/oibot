@@ -137,7 +137,7 @@ class GroupAtMessageCreateEvent(Event):
     ) -> tuple["GroupAtMessageCreateEvent", SendMessageResponse]:
         self.__class__.futures[(self.group_openid, self.author.member_openid)] = (
             future
-        ) = asyncio.Future()
+        ) = asyncio.get_running_loop().create_future()
 
         defer_message_response = await send_message(
             group_openid=self.group_openid,

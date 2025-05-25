@@ -1,4 +1,5 @@
-from typing import Callable
+import asyncio
+from typing import Awaitable, Callable, Literal
 
 
 class Matcher:
@@ -6,23 +7,48 @@ class Matcher:
 
     def __init__(
         self,
-        rule: Callable[..., bool] = lambda: True,
+        rule: Callable[..., bool] | Callable[..., Awaitable[bool]] = (
+            lambda *args, **kwargs: True
+        ),
         *,
-        matchers: list | None = None,
-        operator: str | None = None,
+        matchers: list["Matcher"] | None = None,
+        operator: Literal["and", "or"] | None = None,
     ) -> None:
         self.rule = rule
         self.matchers = matchers or []
         self.operator = operator
 
-    def __call__(self, *args, **kwargs) -> bool:
+    async def __call__(self, *args, **kwargs) -> bool | Awaitable[bool]:
         match self.operator:
             case "and":
-                return all(matcher(*args, **kwargs) for matcher in self.matchers)
+                return all(
+                    await asyncio.gather(
+                        *(matcher(*args, **kwargs) for matcher in self.matchers)
+                    )
+                )
+
             case "or":
-                return any(matcher(*args, **kwargs) for matcher in self.matchers)
+                tasks = [
+                    asyncio.create_task(matcher(*args, **kwargs))
+                    for matcher in self.matchers
+                ]
+
+                for completed_task in asyncio.as_completed(tasks):
+                    if await completed_task:
+                        for task in tasks:
+                            if not task.done() and not task.cancelled():
+                                task.cancel()
+
+                        return True
+
+                return False
+
             case _:
-                return self.rule(*args, **kwargs)
+                return (
+                    await self.rule(*args, **kwargs)
+                    if asyncio.iscoroutinefunction(self.rule)
+                    else self.rule(*args, **kwargs)
+                )
 
     def __and__(self, other: "Matcher") -> "Matcher":
         if self.operator == "and":
@@ -39,4 +65,7 @@ class Matcher:
         return Matcher(matchers=[self, other], operator="or")
 
     def __invert__(self) -> "Matcher":
-        return Matcher(rule=lambda *args, **kwargs: not self(*args, **kwargs))
+        async def invert(*args, **kwargs) -> bool:
+            return not await self(*args, **kwargs)
+
+        return Matcher(rule=invert)

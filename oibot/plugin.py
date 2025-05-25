@@ -13,7 +13,16 @@ from inspect import (
 )
 from pathlib import Path
 from types import UnionType
-from typing import Annotated, Any, Callable, ClassVar, Union, get_args, get_origin
+from typing import (
+    Annotated,
+    Any,
+    Awaitable,
+    Callable,
+    ClassVar,
+    Union,
+    get_args,
+    get_origin,
+)
 
 from oibot.event import Context, Event
 from oibot.matcher import Matcher
@@ -26,7 +35,9 @@ class Plugin:
         self.executors = executors or []
 
     async def run(self, *, event: Event) -> list[Any]:
-        return await asyncio.gather(*(executor(event) for executor in self.executors))
+        return await asyncio.gather(
+            *(asyncio.shield(executor(event)) for executor in self.executors)
+        )
 
 
 class Dependency:
@@ -87,14 +98,23 @@ class PluginManager:
             event = Event.dispatch(ctx=ctx)
 
             await asyncio.gather(
-                *(plugin.run(event=event) for plugin in cls.plugins.values())
+                *(
+                    asyncio.shield(plugin.run(event=event))
+                    for plugin in cls.plugins.values()
+                )
             )
 
         except Exception as e:
             logging.exception(e)
 
 
-def on(matcher: Matcher | Callable[..., bool] | None = None) -> Callable[..., Any]:
+def on(
+    matcher: Matcher
+    | Callable[..., bool]
+    | Callable[..., bool]
+    | Callable[..., Awaitable[bool]]
+    | None = None,
+) -> Callable[..., Any]:
     def annotation_event_type(annotation: Any) -> tuple[type[Event], ...]:
         if get_origin(annotation) in (Annotated, Union, UnionType):
             return tuple(
@@ -174,7 +194,7 @@ def on(matcher: Matcher | Callable[..., bool] | None = None) -> Callable[..., An
 
                 @wraps(func)
                 async def wrapper(event: Event, **kwargs) -> Any:
-                    if isinstance(event, event_type) and matcher(event):
+                    if isinstance(event, event_type) and await matcher(event):
                         func_kwargs: dict[str, Any] = {}
                         tasks: dict[str, asyncio.Task] = {}
 
@@ -221,7 +241,7 @@ def on(matcher: Matcher | Callable[..., bool] | None = None) -> Callable[..., An
 
                 @wraps(func)
                 async def wrapper(event: Event, **kwargs) -> Any:
-                    if isinstance(event, event_type) and matcher(event):
+                    if isinstance(event, event_type) and await matcher(event):
                         return await func(event, **kwargs)
 
         else:

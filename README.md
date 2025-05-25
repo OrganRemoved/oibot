@@ -113,7 +113,7 @@ class Command(Matcher):
         self.command = command
         self.separator = separator
 
-    def __call__(self, event: C2CMessageCreate | GroupAtMessageCreateEvent) -> bool:
+    async def __call__(self, event: C2CMessageCreate | GroupAtMessageCreateEvent) -> bool:
         if self.separator != " ":
             argv = [arg for arg in event.content.strip().split(self.separator) if arg]
 

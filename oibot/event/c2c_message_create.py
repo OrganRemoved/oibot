@@ -126,7 +126,9 @@ class C2CMessageCreate(Event):
         video: bytes | str | None = None,
         voice: bytes | str | None = None,
     ) -> tuple["C2CMessageCreate", SendMessageResponse]:
-        self.__class__.futures[self.author.user_openid] = future = asyncio.Future()
+        self.__class__.futures[self.author.user_openid] = future = (
+            asyncio.get_running_loop().create_future()
+        )
 
         defer_message_response = await send_message(
             openid=self.author.user_openid,
