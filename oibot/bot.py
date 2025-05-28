@@ -1,77 +1,17 @@
 import asyncio
 import logging
 from contextvars import ContextVar
-from functools import _make_key
 from os import environ
-from typing import (
-    Any,
-    Awaitable,
-    Callable,
-    ClassVar,
-    Hashable,
-    Iterable,
-    Literal,
-    Self,
-    TypedDict,
-)
-from weakref import WeakValueDictionary
+from typing import Any, ClassVar, Iterable, Literal, Self
 
 from aiohttp import ClientSession, web
 from aiohttp.web_request import Request
 from aiohttp.web_response import Response
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from oibot.api.access_token import get_app_access_token
 from oibot.event import Context
 from oibot.plugin import PluginManager
-
-
-class AccessToken(TypedDict):
-    access_token: str
-    expires_in: int
-
-
-def keep_alive(
-    func: Callable[..., Awaitable[AccessToken]],
-) -> Callable[..., Awaitable[AccessToken]]:
-    cache: dict[Hashable, AccessToken] = {}
-    inflight: WeakValueDictionary[Hashable, asyncio.Future] = WeakValueDictionary()
-
-    async def decorator(app_id: str, client_secret: str) -> AccessToken:
-        key = _make_key((app_id, client_secret), {}, typed=False)
-
-        if access_token := cache.get(key):
-            return access_token
-
-        if future := inflight.get(key):
-            result = await future
-
-            if exception := future.exception():
-                raise exception
-
-            return result
-
-        inflight[key] = future = asyncio.get_running_loop().create_future()
-        cache[key] = access_token = await func(app_id, client_secret)
-        future.set_result(access_token)
-
-        asyncio.get_running_loop().call_later(
-            int(access_token["expires_in"]) - 30, cache.pop, key, None
-        )
-
-        return access_token
-
-    return decorator
-
-
-@keep_alive
-async def get_app_access_token(app_id: str, client_secret: str) -> AccessToken:
-    async with ClientSession() as session:
-        async with session.post(
-            "https://bots.qq.com/app/getAppAccessToken",
-            json={"appId": app_id, "clientSecret": client_secret},
-        ) as response:
-            response.raise_for_status()
-            return await response.json()
 
 
 async def handler(
