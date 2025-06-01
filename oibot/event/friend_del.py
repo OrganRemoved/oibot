@@ -4,7 +4,7 @@ from typing import ClassVar, Literal
 from oibot.event import Context, Event
 
 
-class FriendDel(Event):
+class FriendDelEvent(Event):
     __slots__ = ("__weakref__", "timestamp", "openid", "author")
 
     class Author:

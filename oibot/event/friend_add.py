@@ -11,7 +11,7 @@ from oibot.api.send_message import (
 from oibot.event import Context, Event
 
 
-class FriendAdd(Event):
+class FriendAddEvent(Event):
     __slots__ = ("__weakref__", "timestamp", "openid", "author")
 
     class Author:

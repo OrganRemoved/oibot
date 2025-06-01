@@ -12,7 +12,7 @@ from oibot.api.send_message import (
 from oibot.event import Context, Event
 
 
-class C2CMessageCreate(Event):
+class C2CMessageCreateEvent(Event):
     __slots__ = (
         "__weakref__",
         "id",
@@ -125,7 +125,7 @@ class C2CMessageCreate(Event):
         image: bytes | str | None = None,
         video: bytes | str | None = None,
         voice: bytes | str | None = None,
-    ) -> tuple["C2CMessageCreate", SendMessageResponse]:
+    ) -> tuple["C2CMessageCreateEvent", SendMessageResponse]:
         self.__class__.futures[self.author.user_openid] = future = (
             asyncio.get_running_loop().create_future()
         )
