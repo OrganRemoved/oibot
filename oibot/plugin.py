@@ -1,6 +1,12 @@
 import asyncio
 import logging
-from contextlib import AsyncExitStack, asynccontextmanager, contextmanager
+from contextlib import (
+    AbstractAsyncContextManager,
+    AbstractContextManager,
+    AsyncExitStack,
+    asynccontextmanager,
+    contextmanager,
+)
 from functools import wraps
 from importlib.util import module_from_spec, spec_from_file_location
 from inspect import (
@@ -111,7 +117,6 @@ class PluginManager:
 def on(
     matcher: Matcher
     | Callable[..., bool]
-    | Callable[..., bool]
     | Callable[..., Awaitable[bool]]
     | None = None,
 ) -> Callable[..., Any]:
@@ -164,7 +169,13 @@ def on(
 
         kwargs.update({k: v.result() for k, v in tasks.items()})
 
-        if isasyncgenfunction(func):
+        if isclass(func) and issubclass(func, AbstractAsyncContextManager):
+            return await stack.enter_async_context(func(**kwargs))
+
+        elif isclass(func) and issubclass(func, AbstractContextManager):
+            return stack.enter_context(func(**kwargs))
+
+        elif isasyncgenfunction(func):
             return await stack.enter_async_context(asynccontextmanager(func)(**kwargs))
 
         elif isgeneratorfunction(func):
