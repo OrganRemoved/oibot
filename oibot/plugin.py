@@ -31,7 +31,7 @@ from typing import (
 )
 
 from oibot.event import Context, Event
-from oibot.matcher import Matcher
+from oibot.matcher import Matcher, ensure_async
 
 
 class Plugin:
@@ -115,10 +115,8 @@ class PluginManager:
 
 
 def on(
-    matcher: Matcher
-    | Callable[..., bool]
-    | Callable[..., Awaitable[bool]]
-    | None = None,
+    matcher: Matcher | Callable[..., bool | Awaitable[bool]] | None = None,
+    to_thread: bool = False,
 ) -> Callable[..., Any]:
     def annotation_event_type(annotation: Any) -> tuple[type[Event], ...]:
         if get_origin(annotation) in (Annotated, Union, UnionType):
@@ -197,6 +195,12 @@ def on(
         )
 
         if matcher:
+            async_matcher = (
+                matcher
+                if isinstance(matcher, Matcher)
+                else ensure_async(func, to_thread=True)
+            )
+
             if any(
                 param
                 for param in sign.parameters.values()
@@ -205,7 +209,7 @@ def on(
 
                 @wraps(func)
                 async def wrapper(event: Event, **kwargs) -> Any:
-                    if isinstance(event, event_type) and await matcher(event):
+                    if isinstance(event, event_type) and await async_matcher(event):
                         func_kwargs: dict[str, Any] = {}
                         tasks: dict[str, asyncio.Task] = {}
 
@@ -252,7 +256,7 @@ def on(
 
                 @wraps(func)
                 async def wrapper(event: Event, **kwargs) -> Any:
-                    if isinstance(event, event_type) and await matcher(event):
+                    if isinstance(event, event_type) and await async_matcher(event):
                         return await func(event, **kwargs)
 
         else:
