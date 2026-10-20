@@ -1,0 +1,42 @@
+name: pypi
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pypi:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: check out repository
+        uses: actions/checkout@main
+        with:
+          persist-credentials: false
+
+      - name: install uv
+        uses: astral-sh/setup-uv@main
+        with:
+          enable-cache: true
+
+      - name: install python
+        run: uv python install
+
+      - name: build distributions
+        run: uv build --no-sources
+
+      - name: smoke test wheel
+        run: uv run --isolated --no-project --with dist/*.whl -- python -c 'from oibot.bot import OiBot'
+
+      - name: smoke test source distribution
+        run: uv run --isolated --no-project --with dist/*.tar.gz -- python -c 'from oibot.bot import OiBot'
+
+      - name: publish distributions
+        run: uv publish
+        env:
+          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
