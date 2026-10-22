@@ -17,6 +17,7 @@ from oibot.api.group_management import (
     GroupManagementMixin,
 )
 from oibot.api.interaction import InteractionMixin
+from oibot.api.material import MaterialMixin
 from oibot.api.menu import MenuMixin
 from oibot.api.message import SendMessageMixin
 from oibot.api.panel import PanelMixin
@@ -35,6 +36,7 @@ class OiBot(
     GroupJoinApprovalStrategyMixin,
     GroupManagementMixin,
     InteractionMixin,
+    MaterialMixin,
     MenuMixin,
     PanelMixin,
     ProfileMixin,
@@ -138,7 +140,10 @@ class OiBot(
     async def middleware(
         self, request: ClientRequest, handler: ClientHandlerType
     ) -> ClientResponse:
-        if request.url.path != "/app/getAppAccessToken":
+        if (
+            request.url.host == "api.bot.qq.com"
+            and request.url.path != "/app/getAppAccessToken"
+        ):
             request.headers["Authorization"] = (
                 f"QQBot {await self.get_access_token(self.app_id, self.app_secret)}"
             )

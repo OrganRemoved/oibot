@@ -401,6 +401,16 @@ class Media(CompactDict):
     ) -> None:
         super().__init__(file_type=file_type, data=data, url=url, file_name=file_name)
 
+    @overload
+    @classmethod
+    def image(cls, *, data: bytes, file_name: str, url: str | None = None) -> Self: ...
+
+    @overload
+    @classmethod
+    def image(
+        cls, *, url: str, data: None = None, file_name: str | None = None
+    ) -> Self: ...
+
     @classmethod
     def image(
         cls,
@@ -601,6 +611,10 @@ def channel(channel_id: str) -> str:
     return f"<#{channel_id}>"
 
 
+def media(token: str) -> str:
+    return f"qqbot-media://image/v1/{token}"
+
+
 class ExtInfo(TypedDict):
     ref_idx: str
 
@@ -700,7 +714,7 @@ class SendMessageMixin:
                     openid=openid,
                     file_type=media["file_type"],
                     file_size=str(len(data)),
-                    file_name=media.get("file_name"),
+                    file_name=media["file_name"],
                     md5=md5(data).hexdigest(),
                     sha1=sha1(data).hexdigest(),
                     md5_10m=md5(data[:10_002_432]).hexdigest(),
@@ -828,7 +842,7 @@ class SendMessageMixin:
                     group_openid=group_openid,
                     file_type=media["file_type"],
                     file_size=str(len(data)),
-                    file_name=media.get("file_name"),
+                    file_name=media["file_name"],
                     md5=md5(data).hexdigest(),
                     sha1=sha1(data).hexdigest(),
                     md5_10m=md5(data[:10_002_432]).hexdigest(),

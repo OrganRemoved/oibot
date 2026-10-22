@@ -32,6 +32,7 @@ in a small, typed interface.
   - [Message builders](#message-builders)
   - [Sending and streaming messages](#sending-and-streaming-messages)
   - [Rich media uploads](#rich-media-uploads)
+  - [Markdown image materials](#markdown-image-materials)
   - [Message recall and interactions](#message-recall-and-interactions)
   - [Group management](#group-management)
   - [Group join approval strategies](#group-join-approval-strategies)
@@ -72,10 +73,12 @@ in a small, typed interface.
 - Builders cover plain text, Markdown, keyboards, references, rich media, input
   notifications, and C2C streaming. Byte media is uploaded in server-directed
   concurrent parts; URL media uses the same high-level send API.
+- Markdown images can be uploaded as reusable platform materials, referenced
+  through `qqbot-media://` URLs, listed, and deleted through the same bot client.
 - Access-token requests are coalesced and cached until shortly before expiry,
   and local sliding-window limiters provide application-, user-, and
   group-scoped backpressure.
-- The HTTP API surface covers messages, rich-media upload, recalls,
+- The HTTP API surface covers messages, rich-media upload, image materials, recalls,
   interactions, group state and moderation, join approval strategies, bot and
   guild information, global menus, and targeted panels.
 
@@ -536,7 +539,15 @@ await event.reply(
 `Media.image(...)`, `Media.video(...)`, `Media.voice(...)`, and
 `Media.file(...)` accept a URL or bytes through `data=...`. The high-level
 `send_user_message(...)` and `send_group_message(...)` methods prepare and
-upload byte content automatically, including multipart uploads when required.
+upload byte content automatically using the platform's multipart protocol.
+Byte uploads require `file_name`, for example
+`Media.image(data=image_bytes, file_name="image.png")`. URL uploads can omit it.
+
+For images embedded in Markdown, use
+[`upload_media_image(...)`](#markdown-image-materials) and pass its returned
+`url` to `Markdown.image(...)`. `Message.media(Media.image(...))` uses the
+rich-media upload and send APIs; `Message.markdown(...)` sends the Markdown
+image reference.
 
 ### Turn event handling into a conversation
 
@@ -650,6 +661,7 @@ from oibot.api.message import (
     StreamInputState,
     at,
     channel,
+    media,
 )
 from oibot.api.rich_media import FileType
 from oibot.bot import OiBot
@@ -682,10 +694,10 @@ Additional constructor options are forwarded to `aiohttp.web.Application`.
 | --- | --- |
 | `app` | Shared `aiohttp.web.Application`. It also stores `app["bot"]` and the credential context variables and is passed to plugin lifecycle hooks. |
 | `app_id` / `app_secret` | Credentials for the current context. API calls use them to obtain an access token. |
-| `async with bot` | Opens and closes the authenticated `aiohttp.ClientSession`. Use this form for one-off API calls outside a transport. |
+| `async with bot` | Opens and closes the shared `aiohttp.ClientSession` with QQ API authentication middleware. Use this form for one-off API calls outside a transport. |
 | `webhook(path="/", host="0.0.0.0", port=8080, **route_options)` | Blocking Webhook entry point. Registers the POST route, validates callbacks and signatures, starts the HTTP server, and owns shutdown. |
 | `websocket(intents=Intents.GROUP_AND_C2C_EVENT, shard=(0, 1), properties={}, host="0.0.0.0", port=8080, **connect_options)` | Blocking WebSocket entry point. `Intents` flags combine with `\|`; extra options go to `aiohttp`'s WebSocket connection. An HTTP site is also started when plugins added application routes. |
-| `await bot(method, url, **request_options)` | Low-level authenticated request interface used by all API mixins. It returns decoded JSON or `None` for an empty body. |
+| `await bot(method, url, **request_options)` | Low-level request interface used by API mixins. It returns decoded JSON or `None` for an empty body; authentication follows the host rules described below. |
 
 The blocking transport methods run the application lifecycle hooks as well as
 the client session. A bare `async with OiBot(...)` opens only the API client; it
@@ -724,8 +736,15 @@ constructors.
 | `Message.markdown(markdown=None, *, keyboard=None, ...)` | Markdown message, optionally with an inline keyboard. |
 | `Message.media(media, *, content=None, ...)` | Image, video, voice, or file message with optional accompanying text. |
 | `Message.input_notify(input_second, ...)` | C2C input-status notification. Group sends do not accept this message type. |
-| `Media.image(...)` / `video(...)` / `voice(...)` / `file(...)` | Rich-media descriptor. Supply bytes with `data=...` or a remote `url=...`; `file_name` is optional. |
+| `Media.image(data=..., file_name=...)` / `image(url=...)` | Image descriptor. Byte uploads require a file name; URL uploads can omit it. |
+| `Media.video(...)` / `voice(...)` / `file(...)` | Other rich-media descriptors. Supply bytes and `file_name`, or a remote `url=...`. |
 | `MessageReference(message_id=...)` | Adds a reference to another message. |
+
+`Media.image()` uses overloads to require `file_name` for `data=...` and allow
+it to be omitted for `url=...`. The implementation retains
+`file_name: str | None = None`; the overloads guide editors and type checkers.
+The builder creates the descriptor without parameter validation or uploading.
+Byte uploads through the send methods use the caller-supplied file name.
 
 Every `Message` constructor also accepts the applicable `msg_id`, `event_id`,
 `msg_seq`, `message_reference`, and `is_wakeup` fields. Normally
@@ -743,7 +762,8 @@ force_verify_image_resource=None)` joins fragments and stores the final
 | `h1` through `h6` | Headings |
 | `emphasis`, `strong_emphasis`, `strikethrough` | Inline emphasis |
 | `code_span`, `fenced_code_block`, `inline_latex` | Code and formula formatting |
-| `link`, `autolink`, `image` | Links and Markdown image resources |
+| `link`, `autolink` | Links |
+| `image(*, text, url, width, height)` | Image markup using a public URL or a `qqbot-media://` reference; this builder only constructs the Markdown. |
 | `block_quote`, `bullet_list`, `ordered_list`, `task_list` | Block and list layouts, including nested `Markdown` fragments |
 | `table(header=..., rows=..., alignments=...)` | Table with optional `left`, `center`, or `right` alignment per column |
 | `thematic_break` | Horizontal separator |
@@ -777,6 +797,7 @@ keyboard = Keyboard(
 | `ButtonRenderDataStyle` | `GRAY`, `BLUE`, `WHITE`, and `BLUE_BACKGROUND` render styles. |
 | `at(id)` | Returns an at-user tag; `at("all")` returns the at-everyone tag. |
 | `channel(channel_id)` | Returns a channel mention. |
+| `media(token)` | Returns `qqbot-media://image/v1/<token>` from a platform-issued token. |
 
 `ButtonRenderData`, `ButtonAction`, `Buttons`, `Rows`, `Keyboard`,
 `MessageReference`, and `InputNotify` remain available for callers that need to
@@ -820,8 +841,8 @@ protocol used by `send_user_message(...)` and `send_group_message(...)`.
 | --- | --- |
 | `upload_user_file(*, openid, file_type, url=None, srv_send_msg=False, file_name=None, upload_id=None)` | Registers URL media or a completed upload for a user and returns `RichMediaUploadResponse`. |
 | `upload_group_file(*, group_openid, file_type, url=None, srv_send_msg=False, file_name=None, upload_id=None)` | Registers URL media or a completed upload for a group and returns `RichMediaUploadResponse`. |
-| `prepare_user_upload(*, openid, file_type=None, file_size=None, file_name=None, md5=None, sha1=None, md5_10m=None)` | Starts a multipart user upload. |
-| `prepare_group_upload(*, group_openid, file_type=None, file_size=None, file_name=None, md5=None, sha1=None, md5_10m=None)` | Starts a multipart group upload. |
+| `prepare_user_upload(*, openid, file_name, file_type=None, file_size=None, md5=None, sha1=None, md5_10m=None)` | Starts a multipart user upload. |
+| `prepare_group_upload(*, group_openid, file_name, file_type=None, file_size=None, md5=None, sha1=None, md5_10m=None)` | Starts a multipart group upload. |
 | `upload_user_part(*, openid, upload_id, data, block_size, part, retry_timeout=300, retry_delay=1)` | Uploads one prepared user part and reports its digest. |
 | `upload_group_part(*, group_openid, upload_id, data, block_size, part, retry_timeout=300, retry_delay=1)` | Uploads one prepared group part and reports its digest. |
 | `finish_user_upload_part(*, openid, upload_id=None, part_index=None, block_size=None, md5=None)` | Marks one user-upload part complete. |
@@ -832,6 +853,90 @@ presigned `parts`, and an `upload_config` containing concurrency and retry
 settings. `RichMediaUploadResponse` supplies `file_uuid`, `file_info`, `ttl`,
 and optional `id` and `raw_url`. Application code normally needs these
 low-level methods only when implementing a custom upload pipeline.
+
+`file_size` and `block_size` in this multipart protocol are decimal strings.
+The prepare methods require `file_name`.
+When completing a multipart upload with `upload_id`, `upload_user_file(...)`
+and `upload_group_file(...)` also require `file_name` in the request. Their
+Python signatures keep it optional because URL uploads may omit it. These
+mixins forward parameters without adding runtime validation.
+
+### Markdown image materials
+
+[`oibot.api.material`](src/oibot/api/material.py) provides `MaterialMixin`,
+included in `OiBot`, for the platform's
+[image material APIs](https://bot.q.qq.com/wiki/develop/api-v2/server-inter/message/material-management.html).
+
+| Method | Behavior |
+| --- | --- |
+| `prepare_media_image_upload(*, file_name, file_size, content_type, md5, sha1)` | Returns `MediaImageUploadPrepareResponse` with `upload_id`, `presigned_url`, and `expires_in`. `file_size` is an integer. |
+| `complete_media_image_upload(*, upload_id, md5)` | Completes the upload using the PUT response's unquoted ETag. Returns `MediaImageUploadResponse` with `image_id`, `url`, `ttl`, and `preview_url`. |
+| `upload_media_image(*, data, file_name, content_type)` | Runs the full upload flow and returns `MediaImageUploadResponse`. All three arguments are required; `data` is bytes. |
+| `get_media_images(*, cursor=None)` | Returns `MediaImageListResponse` with `images`, `next_cursor`, and `total`. An empty next cursor marks the last page. |
+| `delete_media_image(*, image_id)` | Deletes the material, releases its quota, and returns `None`. |
+
+`upload_media_image(...)` performs these steps:
+
+1. Compute the byte length, MD5, and SHA1, then call prepare.
+2. PUT the original bytes to `presigned_url` using the declared Content-Type.
+3. Remove the quotes from the response ETag and pass it to complete with
+   `upload_id`.
+
+Given PNG bytes in `image_bytes`, upload and send the returned reference from
+a running handler:
+
+```python
+from oibot.api.message import Markdown, Message
+
+
+image = await event.bot.upload_media_image(
+    data=image_bytes, file_name="image.png", content_type="image/png"
+)
+await event.reply(
+    Message.markdown(
+        Markdown.image(text="Image", url=image["url"], width=800, height=400)
+    )
+)
+```
+
+The returned `url` can be reused in later Markdown messages sent by the same
+bot. `image_id` identifies the material for deletion; `ttl` is its sliding
+lifetime in seconds. `preview_url` is a temporary preview link.
+
+The `media(token)` helper in `oibot.api.message` constructs
+`qqbot-media://image/v1/<token>` from an existing platform-issued token, alongside
+the `at(...)` and `channel(...)` helpers. Pass only the token component to
+`media(...)`. Upload responses already contain the complete reference in `url`,
+which can be used directly. Keep `image_id` for management operations.
+
+List all pages of materials:
+
+```python
+page = await event.bot.get_media_images()
+images = page["images"]
+
+while cursor := page["next_cursor"]:
+    page = await event.bot.get_media_images(cursor=cursor)
+    images.extend(page["images"])
+```
+
+Each image record includes `image_id`, `url`, `file_name`, `preview_url`,
+`created_at`, and `expires_at`; the timestamps are Unix seconds. Delete a
+material when it is no longer needed:
+
+```python
+await event.bot.delete_media_image(image_id=image["image_id"])
+```
+
+Platform limits apply to these methods:
+
+- Images may be at most 10 MB, with `content_type` set to `image/png`,
+  `image/jpeg`, `image/gif`, or `image/webp`. The file-name extension must match.
+- Each bot can retain up to 100 images. References expire after 90 days without
+  use; a successful message reference renews that window.
+- Upload tasks last 4 hours; presigned URL lifetime is given by `expires_in`.
+  Deleting a material invalidates future references while existing messages
+  retain their images.
 
 ### Message recall and interactions
 
@@ -951,7 +1056,11 @@ and version.
 | --- | --- |
 | `get_app_access_token(app_id, app_secret)` | Calls the unauthenticated token endpoint and returns `{"access_token": str, "expires_in": str}`. |
 | `get_access_token(app_id, app_secret)` | Returns the cached token or coalesces concurrent refreshes. The cache entry is removed 60 seconds before server-reported expiry. |
-| `await bot(method, url, **request_options)` | Executes a request through the shared client. The middleware adds `Authorization: QQBot ...` except on the token endpoint. |
+| `await bot(method, url, **request_options)` | Executes a request through the shared client. The middleware adds `Authorization: QQBot ...` when the URL host is `api.bot.qq.com`, except for `/app/getAppAccessToken`. |
+
+COS uploads use the authorization embedded in their presigned URLs. The
+middleware does not add the QQ Bot access token to those requests. Both rich
+media and Markdown material uploads use this shared client behavior.
 
 The client is configured with `raise_for_status=True`, so HTTP failures surface
 as `aiohttp` exceptions. OiBot does not silently retry ordinary API calls.
