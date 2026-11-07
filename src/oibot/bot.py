@@ -126,8 +126,8 @@ class OiBot(
         logging.debug(f"{method=} {url=} {kwargs=}")
 
         async with self.client_session.request(method, url, **kwargs) as response:
-            if data := await response.read():
-                return json.loads(data)
+            if body := await response.read():
+                return json.loads(body)
 
     @property
     def app_id(self) -> str:

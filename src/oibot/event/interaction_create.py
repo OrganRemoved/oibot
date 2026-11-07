@@ -135,7 +135,7 @@ class InteractionCreateEvent(Event):
         return self.data.resolved.button_id
 
     async def acknowledge(self, code: Code) -> None:
-        await self.bot.acknowledge_interaction(interaction_id=self.id, code=code)
+        return await self.bot.acknowledge_interaction(interaction_id=self.id, code=code)
 
 
 class C2CInteractionCreateEvent(InteractionCreateEvent, scene="c2c"):
@@ -182,7 +182,7 @@ class C2CInteractionCreateEvent(InteractionCreateEvent, scene="c2c"):
 
                     return await asyncio.wait_for(future, timeout=timeout)
 
-            case MsgType.MARKDOWN:
+            case MsgType.MARKDOWN | MsgType.CARD:
                 if "keyboard" in message:
                     button_ids = []
 
@@ -256,7 +256,7 @@ class GroupInteractionCreateEvent(InteractionCreateEvent, scene="group"):
 
                     return await asyncio.wait_for(future, timeout=timeout)
 
-            case MsgType.MARKDOWN:
+            case MsgType.MARKDOWN | MsgType.CARD:
                 if "keyboard" in message:
                     button_ids = []
 

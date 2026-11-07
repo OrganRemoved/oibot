@@ -100,4 +100,4 @@ class MaterialMixin:
         )
 
     async def delete_media_image(self: OiBot, *, image_id: str) -> None:
-        await self(HTTPMethod.DELETE, f"/v2/media-images/{image_id}/delete")
+        return await self(HTTPMethod.DELETE, f"/v2/media-images/{image_id}/delete")

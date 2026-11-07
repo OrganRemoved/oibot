@@ -23,6 +23,6 @@ class InteractionMixin:
     async def acknowledge_interaction(
         self: OiBot, *, interaction_id: str, code: Code
     ) -> None:
-        await self(
+        return await self(
             HTTPMethod.PUT, f"/interactions/{interaction_id}", json={"code": code}
         )

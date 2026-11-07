@@ -315,7 +315,7 @@ class GroupAtMessageCreateEvent(Event):
 
                     return await asyncio.wait_for(future, timeout=timeout)
 
-            case MsgType.MARKDOWN:
+            case MsgType.MARKDOWN | MsgType.CARD:
                 if "keyboard" in message:
                     button_ids = []
 

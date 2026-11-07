@@ -70,8 +70,8 @@ in a small, typed interface.
 - `reply(...)` and `chat(...)` manage quote identifiers, sequence numbers, and
   isolated text or keyboard conversations while preserving the original event
   context.
-- Builders cover plain text, Markdown, keyboards, references, rich media, input
-  notifications, and C2C streaming. Byte media is uploaded in server-directed
+- Builders cover plain text, Markdown, keyboards, references, rich media, cards,
+  input notifications, and C2C streaming. Byte media is uploaded in server-directed
   concurrent parts; URL media uses the same high-level send API.
 - Markdown images can be uploaded as reusable platform materials, referenced
   through `qqbot-media://` URLs, listed, and deleted through the same bot client.
@@ -583,8 +583,8 @@ else:
 OiBot namespaces callback IDs on a copy of the outgoing message, so concurrent
 conversations do not collide. The session manager routes the matching event
 directly to the suspended handler instead of broadcasting it to every plugin.
-For a plain-text or media prompt, `chat(...)` waits for the same user's next
-message.
+For a plain-text, media, or card prompt without a keyboard, `chat(...)` waits
+for the same user's next message.
 
 The transport also records recent incoming message or event identifiers in a
 bounded quota pool. When a reply does not specify `msg_id`, `event_id`, or
@@ -728,16 +728,18 @@ The builders in [`oibot.api.message`](src/oibot/api/message.py) are dictionary
 subclasses, so they can be passed directly to the API while retaining typed
 constructors.
 
-#### `Message` and `Media`
+#### `Message`, `Media`, and `Card`
 
 | Builder | Result |
 | --- | --- |
 | `Message.content(text, ...)` | Plain-text message. |
 | `Message.markdown(markdown=None, *, keyboard=None, ...)` | Markdown message, optionally with an inline keyboard. |
 | `Message.media(media, *, content=None, ...)` | Image, video, voice, or file message with optional accompanying text. |
+| `Message.card(card, *, keyboard=None, ...)` | Image-and-text card message for C2C or group chats, optionally with an inline keyboard. |
 | `Message.input_notify(input_second, ...)` | C2C input-status notification. Group sends do not accept this message type. |
 | `Media.image(data=..., file_name=...)` / `image(url=...)` | Image descriptor. Byte uploads require a file name; URL uploads can omit it. |
 | `Media.video(...)` / `voice(...)` / `file(...)` | Other rich-media descriptors. Supply bytes and `file_name`, or a remote `url=...`. |
+| `Card.tuwen(*, title, description, url, pic_url)` | Card descriptor containing a title, description, destination URL, and image URL. |
 | `MessageReference(message_id=...)` | Adds a reference to another message. |
 
 `Media.image()` uses overloads to require `file_name` for `data=...` and allow
@@ -750,6 +752,28 @@ Every `Message` constructor also accepts the applicable `msg_id`, `event_id`,
 `msg_seq`, `message_reference`, and `is_wakeup` fields. Normally
 `event.reply(...)` or the quota pool supplies reply context automatically; set
 these fields when explicit protocol control is required.
+
+```python
+from oibot.api.message import Card, Message
+
+
+await event.reply(
+    Message.card(
+        Card.tuwen(
+            title="Update available",
+            description="Read the latest changes.",
+            url="https://example.com/update",
+            pic_url="https://example.com/cover.png",
+        )
+    )
+)
+```
+
+The platform requires card titles of 1–50 characters, descriptions of 1–200
+characters, and HTTPS URLs of at most 1024 characters for both `url` and
+`pic_url`. Like the other builders, `Card.tuwen(...)` constructs the payload;
+the platform validates these limits. With a keyboard, `Message.card(...)`
+returns `Message[Keyboard]`, and `chat(...)` waits for a button interaction.
 
 #### `Markdown`
 
@@ -807,15 +831,15 @@ construct lower-level payloads directly.
 
 The high-level `send_*` methods accept a `Message` builder and are the preferred
 entry points. The lower-level `*_message` methods expose the wire fields
-directly. Use `MsgType.PLAINTEXT`, `MARKDOWN`, `INPUT_NOTIFY`, or `MEDIA`
+directly. Use `MsgType.PLAINTEXT`, `MARKDOWN`, `INPUT_NOTIFY`, `MEDIA`, or `CARD`
 instead of their numeric wire values.
 
 | Method | Behavior and return value |
 | --- | --- |
 | `send_user_message(*, openid, message)` | Sends a C2C `Message`. URL media is registered automatically; byte media is prepared, uploaded in server-directed concurrent parts, finalized, and then sent. Returns `MessageResponse`. |
 | `send_group_message(*, group_openid, message)` | Group counterpart to `send_user_message`. Returns `MessageResponse`. |
-| `send_raw_user_message(*, openid, msg_type, content=None, markdown=None, keyboard=None, media=None, message_reference=None, input_notify=None, event_id=None, msg_id=None, is_wakeup=None, msg_seq=None)` | Low-level C2C send. `media` is a finalized `MediaInfo` rather than a `Media` builder. |
-| `send_raw_group_message(*, group_openid, msg_type, content=None, markdown=None, keyboard=None, media=None, message_reference=None, event_id=None, msg_id=None, is_wakeup=None, msg_seq=None)` | Low-level group send. |
+| `send_raw_user_message(*, openid, msg_type, content=None, markdown=None, keyboard=None, media=None, card=None, message_reference=None, input_notify=None, event_id=None, msg_id=None, is_wakeup=None, msg_seq=None)` | Low-level C2C send. `media` is a finalized `MediaInfo` rather than a `Media` builder. |
+| `send_raw_group_message(*, group_openid, msg_type, content=None, markdown=None, keyboard=None, media=None, card=None, message_reference=None, event_id=None, msg_id=None, is_wakeup=None, msg_seq=None)` | Low-level group send. |
 | `stream_user_message(*, openid, input_state, index, content_type, content_raw, input_mode="append", event_id=None, msg_id=None, stream_msg_id=None, msg_seq=None, is_wakeup=None)` | Sends or updates a C2C stream. `content_type` is `"text"` or `"markdown"` and `input_mode` is `"append"` or `"replace"`. |
 
 `StreamInputState.GENERATING` marks an in-progress stream and

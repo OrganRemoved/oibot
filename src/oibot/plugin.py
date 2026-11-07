@@ -193,28 +193,28 @@ class QuotaPool:
             case "C2C_MESSAGE_CREATE":
                 (pool := self.pool[event.author.user_openid])[event.id] = {
                     "msg_id": event.id,
-                    "expire": event.timestamp + timedelta(hours=1),
+                    "expire": event.timestamp + timedelta(minutes=30),
                     "msg_seq": iter(range(4)),
                 }
 
             case "GROUP_AT_MESSAGE_CREATE" | "GROUP_MESSAGE_CREATE":
                 (pool := self.pool[event.group_openid])[event.id] = {
                     "msg_id": event.id,
-                    "expire": event.timestamp + timedelta(minutes=5),
+                    "expire": event.timestamp + timedelta(minutes=4),
                     "msg_seq": iter(range(5)),
                 }
 
             case "FRIEND_ADD" | "C2C_MSG_RECEIVE":
                 (pool := self.pool[event.openid])[event["id"]] = {
                     "event_id": event["id"],
-                    "expire": event.timestamp + timedelta(minutes=5),
+                    "expire": event.timestamp + timedelta(minutes=4),
                     "msg_seq": iter(range(5)),
                 }
 
             case "GROUP_ADD_ROBOT" | "GROUP_MSG_RECEIVE":
                 (pool := self.pool[event.group_openid])[event["id"]] = {
                     "event_id": event["id"],
-                    "expire": event.timestamp + timedelta(minutes=5),
+                    "expire": event.timestamp + timedelta(minutes=4),
                     "msg_seq": iter(range(5)),
                 }
 
@@ -222,14 +222,14 @@ class QuotaPool:
                 if user_openid := getattr(event, "user_openid", None):
                     (pool := self.pool[user_openid])[event["id"]] = {
                         "event_id": event["id"],
-                        "expire": event.timestamp + timedelta(hours=1),
+                        "expire": event.timestamp + timedelta(minutes=30),
                         "msg_seq": iter(range(4)),
                     }
 
                 elif group_openid := getattr(event, "group_openid", None):
                     (pool := self.pool[group_openid])[event["id"]] = {
                         "event_id": event["id"],
-                        "expire": event.timestamp + timedelta(minutes=5),
+                        "expire": event.timestamp + timedelta(minutes=4),
                         "msg_seq": iter(range(5)),
                     }
 

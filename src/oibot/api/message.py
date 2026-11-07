@@ -33,6 +33,7 @@ class MsgType(IntEnum):
     MARKDOWN = 2
     INPUT_NOTIFY = 6
     MEDIA = 7
+    CARD = 8
 
 
 class StreamInputState(IntEnum):
@@ -456,6 +457,20 @@ class MediaInfo(TypedDict):
     file_info: str
 
 
+class Card(CompactDict):
+    @classmethod
+    def tuwen(cls, *, title: str, description: str, url: str, pic_url: str) -> Self:
+        return cls(
+            type="tuwen",
+            content={
+                "title": title,
+                "description": description,
+                "url": url,
+                "pic_url": pic_url,
+            },
+        )
+
+
 class Message[T: Keyboard | None = None](CompactDict):
     def __init__(
         self,
@@ -465,6 +480,7 @@ class Message[T: Keyboard | None = None](CompactDict):
         markdown: Markdown | None = None,
         keyboard: Keyboard | None = None,
         media: Media | None = None,
+        card: Card | None = None,
         message_reference: MessageReference | None = None,
         input_notify: InputNotify | None = None,
         msg_id: str | None = None,
@@ -478,6 +494,7 @@ class Message[T: Keyboard | None = None](CompactDict):
             markdown=markdown,
             keyboard=keyboard,
             media=media,
+            card=card,
             message_reference=message_reference,
             input_notify=input_notify,
             msg_id=msg_id,
@@ -523,6 +540,57 @@ class Message[T: Keyboard | None = None](CompactDict):
             msg_type=MsgType.MEDIA,
             media=media,
             content=content,
+            message_reference=message_reference,
+            msg_id=msg_id,
+            event_id=event_id,
+            msg_seq=msg_seq,
+            is_wakeup=is_wakeup,
+        )
+
+    @overload
+    @classmethod
+    def card(
+        cls,
+        card: Card,
+        *,
+        keyboard: Keyboard,
+        message_reference: MessageReference | None = None,
+        msg_id: str | None = None,
+        event_id: str | None = None,
+        msg_seq: int | None = None,
+        is_wakeup: bool | None = None,
+    ) -> Message[Keyboard]: ...
+
+    @overload
+    @classmethod
+    def card(
+        cls,
+        card: Card,
+        *,
+        keyboard: None = None,
+        message_reference: MessageReference | None = None,
+        msg_id: str | None = None,
+        event_id: str | None = None,
+        msg_seq: int | None = None,
+        is_wakeup: bool | None = None,
+    ) -> Message: ...
+
+    @classmethod
+    def card(
+        cls: type[Message],
+        card: Card,
+        *,
+        keyboard: Keyboard | None = None,
+        message_reference: MessageReference | None = None,
+        msg_id: str | None = None,
+        event_id: str | None = None,
+        msg_seq: int | None = None,
+        is_wakeup: bool | None = None,
+    ) -> Message[Keyboard] | Message:
+        return cls(
+            msg_type=MsgType.CARD,
+            card=card,
+            keyboard=keyboard,
             message_reference=message_reference,
             msg_id=msg_id,
             event_id=event_id,
@@ -676,6 +744,7 @@ class SendMessageMixin:
         markdown: Markdown | None = None,
         keyboard: Keyboard | None = None,
         media: MediaInfo | None = None,
+        card: Card | None = None,
         message_reference: MessageReference | None = None,
         input_notify: InputNotify | None = None,
         event_id: str | None = None,
@@ -692,6 +761,7 @@ class SendMessageMixin:
                 markdown=markdown,
                 keyboard=keyboard,
                 media=media,
+                card=card,
                 message_reference=message_reference,
                 input_notify=input_notify,
                 event_id=event_id,
@@ -806,6 +876,7 @@ class SendMessageMixin:
         markdown: Markdown | None = None,
         keyboard: Keyboard | None = None,
         media: MediaInfo | None = None,
+        card: Card | None = None,
         message_reference: MessageReference | None = None,
         event_id: str | None = None,
         msg_id: str | None = None,
@@ -821,6 +892,7 @@ class SendMessageMixin:
                 markdown=markdown,
                 keyboard=keyboard,
                 media=media,
+                card=card,
                 message_reference=message_reference,
                 event_id=event_id,
                 msg_id=msg_id,

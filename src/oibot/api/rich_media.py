@@ -104,7 +104,7 @@ class RichMediaMixin:
         block_size: str | None = None,
         md5: str | None = None,
     ) -> None:
-        await self(
+        return await self(
             HTTPMethod.POST,
             f"/v2/users/{openid}/upload_part_finish",
             json=CompactDict(
@@ -206,7 +206,7 @@ class RichMediaMixin:
         block_size: str | None = None,
         md5: str | None = None,
     ) -> None:
-        await self(
+        return await self(
             HTTPMethod.POST,
             f"/v2/groups/{group_openid}/upload_part_finish",
             json=CompactDict(
