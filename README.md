@@ -18,8 +18,7 @@ in a small, typed interface.
   - [Modules are plugins](#modules-are-plugins)
   - [Type annotations are event subscriptions](#type-annotations-are-event-subscriptions)
   - [Matchers can return context](#matchers-can-return-context)
-  - [Command: parse and inject arguments](#command-parse-and-inject-arguments)
-  - [Require: ordered guards with feedback](#require-ordered-guards-with-feedback)
+  - [Matcher chains pass context in order](#matcher-chains-pass-context-in-order)
   - [Lifecycle hooks share the aiohttp application](#lifecycle-hooks-share-the-aiohttp-application)
 - [Dependency injection](#dependency-injection)
   - [Lazy dependencies: acquire only when needed](#lazy-dependencies-acquire-only-when-needed)
@@ -27,7 +26,7 @@ in a small, typed interface.
   - [Turn event handling into a conversation](#turn-event-handling-into-a-conversation)
 - [Calling APIs directly](#calling-apis-directly)
 - [API reference](#api-reference)
-  - [`OiBot`](#oibot)
+  - [`OiBot`](#oibot-1)
   - [Plugin, matcher, and dependency APIs](#plugin-matcher-and-dependency-apis)
   - [Message builders](#message-builders)
   - [Sending and streaming messages](#sending-and-streaming-messages)
@@ -45,42 +44,24 @@ in a small, typed interface.
 
 ## Highlights
 
-- Webhook and WebSocket delivery share one `aiohttp` application and one
-  asynchronous QQ Bot API client.
-- Webhooks handle callback validation and Ed25519 signature verification;
-  WebSockets handle heartbeats, reconnects, token refresh, and session resume.
-- One plugin path or several plugin trees can be discovered recursively, with
-  module lifecycle hooks and concurrent handler dispatch.
-- Handler annotations route concrete events and unions without string event
-  names; unknown event types remain observable through the base `Event`.
-- Synchronous and asynchronous matchers compose with `&`, `|`, and `~`, return
-  handler context, short-circuit synchronous rules, and run compatible
-  asynchronous branches concurrently.
-- Application-defined matchers such as [`Command`](#command-parse-and-inject-arguments)
-  and [`Require`](#require-ordered-guards-with-feedback) turn command parsing,
-  ordered access checks, and rejection feedback into reusable rules.
-- Dependency graphs support functions, coroutines, generators, context
-  managers, eager or lazy resolution, caching within each handler invocation,
-  and deterministic reverse-order cleanup. A
-  [lookup handler](#lazy-dependencies-acquire-only-when-needed) can validate
-  input before creating its HTTP session.
-- Typed C2C, at-mention, full-group-message, interaction, friend, membership,
-  permission, and join-request events expose parsed authors, mentions,
-  attachments, nested message elements, timestamps, and action helpers.
-- `reply(...)` and `chat(...)` manage quote identifiers, sequence numbers, and
-  isolated text or keyboard conversations while preserving the original event
-  context.
-- Builders cover plain text, Markdown, keyboards, references, rich media, cards,
-  input notifications, and C2C streaming. Byte media is uploaded in server-directed
-  concurrent parts; URL media uses the same high-level send API.
-- Markdown images can be uploaded as reusable platform materials, referenced
-  through `qqbot-media://` URLs, listed, and deleted through the same bot client.
-- Access-token requests are coalesced and cached until shortly before expiry,
-  and local sliding-window limiters provide application-, user-, and
-  group-scoped backpressure.
-- The HTTP API surface covers messages, rich-media upload, image materials, recalls,
-  interactions, group state and moderation, join approval strategies, bot and
-  guild information, global menus, and targeted panels.
+- Webhook and WebSocket transports share one `aiohttp` application and API
+  client, with signature verification and connection recovery built in.
+- Ordinary Python modules are discovered as plugins, with lifecycle hooks and
+  concurrent handler dispatch.
+- Handler annotations select event types and unions; matcher results supply
+  named handler arguments.
+- Synchronous and asynchronous rules compose with `&`, `|`, and `~` for logical
+  checks, or `>>` and `<<` for ordered context passing and short-circuiting.
+- Eager and lazy dependencies support functions, generators, and context
+  managers, with reuse within each handler invocation and automatic cleanup.
+- The shared application holds resources for the bot's lifetime; dependency
+  providers manage resources for individual handler invocations.
+- Message builders cover text, Markdown, keyboards, cards, rich media, and
+  streaming. Images can also be managed as reusable Markdown materials.
+- `reply(...)` targets the originating conversation, with quoting for group
+  messages; `chat(...)` waits for message or button responses.
+- Typed QQ Bot APIs cover messaging, interactions, group management, menus,
+  and panels, with access-token refresh and scoped request throttling.
 
 ## Requirements
 
@@ -122,7 +103,7 @@ awesome_oibot/
 ├── bot.py
 └── plugins/
     ├── __init__.py
-    └── echo.py
+    └── ping.py
 ```
 
 ### Start the bot
@@ -159,10 +140,7 @@ event deliveries whose Ed25519 request signature is missing or invalid.
 
 ### Write the smallest useful plugin
 
-The following follows the minimal pattern used by the accompanying bot
-plugins: one ordinary rule, one typed event parameter, and one async handler.
-There is no plugin base class, manifest, registration call, or
-framework-specific wrapper to maintain.
+A plugin is a Python module containing typed event handlers:
 
 ```python
 from oibot.event.group_at_message_create import GroupAtMessageCreateEvent
@@ -170,21 +148,14 @@ from oibot.event.group_message_create import GroupMessageCreateEvent
 from oibot.plugin import on
 
 
-@on(lambda event: event.content.strip() in {"Oi", "oi"})
-async def oi(event: GroupAtMessageCreateEvent | GroupMessageCreateEvent) -> None:
-    await event.reply("Ciallo～(∠・ω< )⌒☆")
+@on(lambda event: event.content.strip() == "/ping")
+async def ping(event: GroupAtMessageCreateEvent | GroupMessageCreateEvent) -> None:
+    await event.reply("pong")
 ```
 
-This small plugin already demonstrates the central framework design:
-
-- The handler annotation is the event subscription. The union receives both
-  at-mention and full-group-message events without duplicate handlers.
-- A matcher can be any synchronous or asynchronous callable. A lambda keeps a
-  simple hot path simple; richer rules can use `Matcher` composition.
-- `event.reply(...)` preserves the event context and lets the framework manage
-  reply identifiers, sequence numbers, rate limits, and transport details.
-- The decorated function is discovered automatically when OiBot imports the
-  plugin directory.
+The annotation subscribes to both event types. The rule selects messages, and
+`reply(...)` sends a response using the event's context. OiBot discovers the
+handler when it imports the plugin module.
 
 ## WebSocket transport
 
@@ -207,9 +178,12 @@ if __name__ == "__main__":
 ```
 
 `GROUP_AND_C2C_EVENT` is the default. Add `INTERACTION` for callback buttons.
+Add `GROUP_MEMBER_EVENT` for group-member joins, departures, and join requests.
+Join-request events require the bot to be a group administrator.
 Other flags include `GUILDS`, `GUILD_MEMBERS`, `GUILD_MESSAGES`,
-`GUILD_MESSAGE_REACTIONS`, `DIRECT_MESSAGE`, `MESSAGE_AUDIT`, `FORUMS_EVENT`,
-`AUDIO_ACTION`, and `PUBLIC_GUILD_MESSAGES`.
+`GUILD_MESSAGE_REACTIONS`, `DIRECT_MESSAGE`, `OPEN_FORUMS_EVENT`,
+`AUDIO_OR_LIVE_CHANNEL_MEMBER`, `MESSAGE_AUDIT`, `FORUMS_EVENT`, `AUDIO_ACTION`,
+and `PUBLIC_GUILD_MESSAGES`.
 
 Both `webhook(...)` and `websocket(...)` are blocking entry points that own the
 bot HTTP-client lifecycle. Inside a running handler, use `event.bot` for API
@@ -241,10 +215,8 @@ scanned recursively and Python files beginning with `_` are ignored. An
 imported module becomes a plugin when it exposes at least one `@on(...)`
 handler or an `init(app)` lifecycle hook.
 
-There is no plugin object graph to construct. A plugin remains an ordinary
-Python module, so its functions, types, and tests stay easy to reuse. Handlers
-from all loaded plugins are dispatched concurrently with `asyncio.TaskGroup`;
-execution order is intentionally not part of the contract.
+Plugins remain ordinary Python modules. Handlers from all loaded plugins run
+concurrently; their execution order is not guaranteed.
 
 ### Type annotations are event subscriptions
 
@@ -267,124 +239,93 @@ event subscription and will not run.
 
 ### Matchers can return context
 
-A matcher may return a boolean-like value or a dictionary. A non-empty
-dictionary both marks the rule as matched and supplies named values to the
-handler; `{}`, `None`, and other falsy results mean no match:
+A rule may be synchronous or asynchronous. `await matcher.match(...)`
+normalizes its result into a context dictionary:
+
+| Rule result | Match context |
+| --- | --- |
+| Non-empty dictionary | The dictionary itself. Values may be falsy, as in `{"text": ""}` or `{"value": None}`. |
+| Other truthy value | `{"_": result}`, including `{"_": True}` for `True`. |
+| Falsy value, including `False`, `None`, or `{}` | `{}`; the handler is skipped. |
+
+Only keys matching named handler parameters are injected. A handler with
+`**kwargs` receives the complete matcher context. Event and dependency
+parameters are supplied by the framework and take precedence over matching
+context keys.
+
+Use `&`, `|`, and `~` for logical composition, with `Matcher.all(...)` and
+`Matcher.any(...)` as named equivalents for `&` and `|`:
+
+- `&` requires every branch to match and merges their contexts. A failed
+  branch stops the match.
+- `|` accepts the first successful branch and returns its context.
+- `~` returns the boolean inverse of a rule's success, without retaining its
+  context. Applying `~` twice restores the truth value, not the original data.
+
+Within `&` and `|`, branches receive the same input; results are not passed
+between them. Synchronous branches run first. If still needed, asynchronous
+branches run concurrently and their results are processed in completion order.
+For `&`, later results overwrite duplicate keys; for `|`, the first successful
+completion wins. Unfinished branches are cancelled once the outcome is known.
+Use a chain when execution order or context passing matters.
+
+### Matcher chains pass context in order
+
+`left >> right` runs left before right; `left << right` runs right before left.
+Synchronous and asynchronous rules can be mixed. Every stage receives the same
+event and the accumulated keyword context. Each stage must accept all incoming
+keywords; use named parameters for the values it needs and `**kwargs` for the
+rest. The chain passes context separately from the event.
+
+Dictionary results update that context, with later values replacing earlier
+values of the same name. A failed match stops the chain and skips the handler.
 
 ```python
+from typing import Any
+
 from oibot.event.group_at_message_create import GroupAtMessageCreateEvent
 from oibot.event.group_message_create import GroupMessageCreateEvent
+from oibot.matcher import Matcher
 from oibot.plugin import on
 
 
 MessageEvent = GroupAtMessageCreateEvent | GroupMessageCreateEvent
 
 
-def echo_rule(event: MessageEvent) -> dict[str, str] | None:
-    content = event.content.strip()
+def echo_input(event: MessageEvent) -> dict[str, str] | None:
+    command, _, text = event.content.strip().partition(" ")
+    if command in {"echo", "/echo"}:
+        return {"text": text}
 
-    if content.startswith("echo "):
-        return {"text": content.removeprefix("echo ").strip()}
+
+def nonempty_text(
+    event: MessageEvent, *, text: str, **kwargs: Any
+) -> dict[str, str] | None:
+    if text := text.strip():
+        return {"text": text}
 
 
-@on(echo_rule)
+parse_echo = Matcher(echo_input)
+normalize_text = Matcher(nonempty_text)
+
+
+@on(parse_echo >> normalize_text)
 async def echo(event: MessageEvent, *, text: str) -> None:
     await event.reply(text)
 ```
 
-Only dictionary keys matching named handler parameters are injected. A handler
-with `**kwargs` receives the complete matcher context.
+`/echo   hello` produces `{"text": "  hello"}`, then `{"text": "hello"}`.
+The handler receives the normalized text. `/echo` stops at the second rule;
+unrelated messages stop at the first. `normalize_text << parse_echo` gives the
+same order and result.
 
-For reusable rules, `Matcher` supports `&`, `|`, and `~`, with
-`Matcher.all(...)` and `Matcher.any(...)` as named equivalents. Synchronous
-rules are evaluated before asynchronous work; compatible asynchronous rules
-are scheduled concurrently. Successful `&` branches merge their dictionaries,
-which makes parsing, authorization, and feature-state rules independently
-composable.
+Chains retain fields from earlier stages unless a later result replaces them.
+Each result follows the same truthiness and context rules described above.
 
-### Command: parse and inject arguments
-
-`Command` and `Require` below are small application-defined `Matcher`
-subclasses, not built-in OiBot exports. Put them in `helper/matcher.py`, with an
-empty `helper/__init__.py`.
-
-```python
-from oibot.event.group_at_message_create import GroupAtMessageCreateEvent
-from oibot.event.group_message_create import GroupMessageCreateEvent
-from oibot.matcher import Matcher
-
-
-MessageEvent = GroupAtMessageCreateEvent | GroupMessageCreateEvent
-
-
-class Command(Matcher[[MessageEvent]]):
-    def __init__(self, command: str) -> None:
-        super().__init__()
-        self.commands = {command, f"/{command}"}
-
-    def __call__(self, event: MessageEvent) -> dict[str, list[str]] | None:
-        argv = event.content.split()
-        if argv and argv[0] in self.commands:
-            return {"argv": argv}
-```
-
-For `/echo hello`, `Command("echo")` returns
-`{"argv": ["/echo", "hello"]}`. OiBot injects `argv` into the handler by parameter
-name. Command aliases compose naturally with `|`.
-
-### Require: ordered guards with feedback
-
-`Require` checks its primary rule, then its requirements in order. This minimal
-version supports a text reply when its primary rule fails. Append it to the
-same helper module:
-
-```python
-class Require(Matcher[[MessageEvent]]):
-    def __init__(self, matcher, *requirements, on_unmet: str | None = None):
-        super().__init__()
-        self.matcher = matcher
-        self.requirements = requirements
-        self.on_unmet = on_unmet
-
-    async def __call__(self, event: MessageEvent):
-        matched = await self.matcher.match(event)
-        if not matched:
-            if self.on_unmet:
-                await event.reply(self.on_unmet)
-            return {}
-
-        for requirement in self.requirements:
-            if not await requirement.match(event):
-                return {}
-
-        return matched
-```
-
-For example, allow administrators to use either `/echo` or `/say`:
-
-```python
-from helper.matcher import Command, MessageEvent, Require
-from oibot.matcher import Matcher
-from oibot.plugin import on
-
-
-is_admin = Matcher(lambda event: event.author.member_role in {"admin", "owner"})
-
-
-@on(
-    Require(
-        Command("echo") | Command("say"),
-        Require(is_admin, on_unmet="This command requires an administrator."),
-    )
-)
-async def echo(event: MessageEvent, *, argv: list[str]) -> None:
-    await event.reply(" ".join(argv[1:]) or "Usage: /echo <text>")
-```
-
-Unrelated messages stop before the permission check. A denied command gets
-the inner `Require`'s reply; an allowed command passes the original `argv` to
-the handler. `match(...)` handles both synchronous and asynchronous checks, so
-the same structure works with a permission lookup that needs I/O.
+Use `await matcher.match(event)` to run a matcher directly. Chains are always
+asynchronous. A chain's parameter signature follows its first executed rule:
+the left operand of `>>` or the right operand of `<<`. Parenthesize mixed
+compositions, such as `parse_input >> (check_a | check_b)`.
 
 ### Lifecycle hooks share the aiohttp application
 
@@ -403,11 +344,15 @@ async def init(app: web.Application) -> AsyncIterator[None]:
         yield
 ```
 
-Synchronous and asynchronous generator functions and ordinary lifecycle
-callables are supported. Generator cleanup runs when the transport shuts down.
+Synchronous and asynchronous generators finish setup up to `yield` before
+startup continues, and resume for cleanup during shutdown. Ordinary sync or
+async `init(app)` callables run as background tasks; startup does not wait for
+them to finish. Use a generator for resources that must be ready before events
+are handled.
+
 The same `aiohttp.web.Application` is available as `bot.app`, allowing the
 entry point and plugins to share routes, schedulers, connection pools, and
-other process-wide resources without framework-specific containers.
+other resources for that bot's lifetime.
 
 ## Dependency injection
 
@@ -440,23 +385,22 @@ The framework enters `ClientSession` as an async context manager and closes it
 after the handler finishes. The same lifecycle applies to custom generators
 and context managers.
 
-Providers may depend on other providers and may request the current event with
-a type annotation. OiBot builds the dependency graph once when the decorator is
-evaluated, then resolves it for each matching event:
+Providers may depend on other providers and request the current event through
+a type annotation. Matcher context is injected into the handler, not into
+provider parameters. Dependencies are resolved after the matcher succeeds.
+For each matched handler:
 
 - independent eager dependencies are resolved concurrently;
 - the same provider callable used several times in one handler invocation is
   resolved once and cached;
-- nested dependencies share the same cache and `AsyncExitStack`;
 - generator and context-manager cleanup runs in reverse acquisition order; and
 - `eager=False` injects a zero-argument async resolver, so an expensive browser,
   HTTP client, or other resource is created only when the handler actually
   awaits that resolver.
 
 This keeps resource ownership local to a handler while retaining explicit
-types and deterministic cleanup. Application-lifetime resources can instead
-live in `bot.app`, so request-lifetime and process-lifetime dependencies remain
-separate by design.
+types and deterministic cleanup. Resources shared across handlers can instead
+live in `bot.app` and be managed by a plugin's `init(app)` hook.
 
 ### Lazy dependencies: acquire only when needed
 
@@ -466,26 +410,38 @@ A lookup command can return usage text before it ever needs an HTTP client:
 from collections.abc import Awaitable, Callable
 
 from aiohttp import ClientSession
-from helper.matcher import Command, MessageEvent
+
+from oibot.event.group_at_message_create import GroupAtMessageCreateEvent
+from oibot.event.group_message_create import GroupMessageCreateEvent
+from oibot.matcher import Matcher
 from oibot.plugin import Dependency, on
 
 
-@on(Command("lookup"))
+MessageEvent = GroupAtMessageCreateEvent | GroupMessageCreateEvent
+
+
+def lookup_input(event: MessageEvent) -> dict[str, str] | None:
+    command, _, keyword = event.content.strip().partition(" ")
+    if command == "/lookup":
+        return {"keyword": keyword.strip()}
+
+
+@on(Matcher(lookup_input))
 async def lookup(
     event: MessageEvent,
     *,
-    argv: list[str],
+    keyword: str,
     get_session: Callable[[], Awaitable[ClientSession]] = Dependency.from_provider(
         ClientSession, eager=False
     ),
 ) -> None:
-    if len(argv) < 2:
+    if not keyword:
         await event.reply("Usage: /lookup <keyword>")
         return
 
     session = await get_session()
     async with session.get(
-        "https://api.example.com/search", params={"q": " ".join(argv[1:])}
+        "https://api.example.com/search", params={"q": keyword}
     ) as response:
         response.raise_for_status()
         await event.reply(await response.text())
@@ -495,15 +451,19 @@ async def lookup(
 creates one at `await get_session()`. OiBot reuses it within that handler
 invocation and closes it when the handler exits, including on exceptions.
 
-With eager injection, the session would be created before the argument check.
-`eager=False` lets the handler decide when acquisition is needed while keeping
-automatic cleanup. The URL above is a placeholder for your own API.
+The URL above is a placeholder for your own API.
 
 ## Messages and conversations
 
 Common message events expose `reply(...)`. A string is converted to a plain
 text message, while the builders in `oibot.api.message` cover Markdown,
 keyboards, rich media, references, and input notifications.
+
+`GroupAtMessageCreateEvent` and `GroupMessageCreateEvent` support
+`await event.reply("pong", quote=True)` to reference the incoming message,
+using its `message_scene.ext["msg_idx"]`. Their `chat(...)` methods accept the
+same option. C2C and interaction helpers do not accept `quote`; retain the
+original group-message event when a later button response should quote it.
 
 ```python
 from oibot.api.message import Button, Buttons, Keyboard, Markdown, Media, Message
@@ -551,12 +511,20 @@ image reference.
 
 ### Turn event handling into a conversation
 
-`chat(...)` sends a message and suspends only the current handler until the
-same user replies. If the outgoing Markdown contains a keyboard, it waits for a
-callback from that keyboard instead:
+`chat(...)` sends a message and suspends the current handler. Without a
+keyboard, it waits for the same user's next message. A Markdown or card message
+with a keyboard waits for a button callback instead; the button's permission
+controls who may respond. `timeout` accepts seconds, a `timedelta`, or `None`.
 
 ```python
-from oibot.api.message import Button, Buttons, Keyboard, Markdown, Message
+from oibot.api.message import (
+    Button,
+    ButtonActionPermission,
+    Buttons,
+    Keyboard,
+    Markdown,
+    Message,
+)
 
 
 try:
@@ -566,7 +534,12 @@ try:
             keyboard=Keyboard(
                 Buttons(
                     Button.callback(
-                        id="continue", label="Continue", data={"continue": True}
+                        id="continue",
+                        label="Continue",
+                        data={"continue": True},
+                        permission=ButtonActionPermission.specify_user_ids(
+                            event.author.member_openid
+                        ),
                     )
                 )
             ),
@@ -580,17 +553,17 @@ else:
         await interaction.reply("Continuing.")
 ```
 
-OiBot namespaces callback IDs on a copy of the outgoing message, so concurrent
-conversations do not collide. The session manager routes the matching event
-directly to the suspended handler instead of broadcasting it to every plugin.
-For a plain-text, media, or card prompt without a keyboard, `chat(...)` waits
-for the same user's next message.
+This group-message example limits the button to the initiating member.
+OiBot suffixes outgoing button IDs with the originating event ID on a copy of
+the message. The session manager routes a matching response to the waiting
+handler instead of dispatching it to plugins. Text waits are keyed by user;
+button waits are keyed by button ID. Keep one active wait per key.
 
 The transport also records recent incoming message or event identifiers in a
-bounded quota pool. When a reply does not specify `msg_id`, `event_id`, or
-`msg_seq`, the sending layer acquires valid reply context automatically. This
-keeps protocol bookkeeping out of plugin code while still allowing callers to
-override every field explicitly.
+bounded quota pool. The sending layer uses an available entry to supply reply
+identifiers and sequence numbers; if no entry is available, it leaves the
+message fields as supplied. This reply context is separate from the visible
+message reference added by `quote=True`.
 
 ## Calling APIs directly
 
@@ -630,17 +603,16 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-Access tokens are cached and refreshed before expiry. The API methods also use
-local sliding-window limiters keyed by application and, where appropriate, by
-user or group. This provides backpressure without forcing every plugin to
-implement its own limiter.
+Access tokens are cached until shortly before expiry and fetched again on
+demand. The API methods also use local sliding-window limiters keyed by
+application and, where appropriate, by user or group. This provides
+backpressure without forcing every plugin to implement its own limiter.
 
 ## API reference
 
-This section documents the application-level interface implemented by the
-current source tree. `OiBot` composes the API mixins, so every method below is
-called directly on a bot instance. API methods are asynchronous unless stated
-otherwise. Parameters following `*` are keyword-only.
+The methods below are available directly on an `OiBot` instance. API methods
+are asynchronous unless stated otherwise. Parameters following `*` are
+keyword-only.
 
 The package root deliberately does not re-export the public types. Import each
 name from its concrete module:
@@ -677,7 +649,7 @@ uses `CompactDict`.
 
 ### `OiBot`
 
-```python
+```text
 OiBot(
     plugins: str | Iterable[str] | None = None,
     *,
@@ -709,18 +681,19 @@ does not start event delivery or the `aiohttp` application runner.
 | --- | --- |
 | `@on(matcher=None)` | Declares an async handler. One or more parameters must be annotated with `Event` subclasses; a union subscribes to every member type. |
 | `Matcher(rule)` | Wraps a synchronous or asynchronous rule. A truthy result matches; a non-empty dictionary also becomes injectable handler context. `{}` means no match. |
-| `left & right` / `Matcher.all(...)` | Requires every rule to match and merges dictionary results. Synchronous rules run first; asynchronous branches may run concurrently. |
-| `left \| right` / `Matcher.any(...)` | Returns the first successful rule context. |
-| `~matcher` | Inverts whether the wrapped matcher succeeds. |
+| `left & right` / `Matcher.all(...)` | Requires every rule to match and merges contexts. Synchronous branches run first, then asynchronous branches run concurrently; results do not flow between branches. |
+| `left \| right` / `Matcher.any(...)` | Returns the first successful context: synchronous branches first, then asynchronous branches in completion order. |
+| `~matcher` | Inverts the wrapped rule's truth value and discards its context. A successful inversion normalizes to `{"_": True}`. |
+| `left >> right` | Runs left, then right, passing the accumulated keyword context between stages. Returns the final context, or `{}` on the first failed match. Always asynchronous. |
+| `left << right` | Runs right, then left, with the same context passing and failure behavior as `>>`. Always asynchronous. |
 | `await matcher.match(...)` | Normalizes a successful result to a dictionary and a failed result to `{}`. |
 | `Dependency.from_provider(provider, eager=True)` | Declares a parameter dependency. Set `eager=False` to inject an async zero-argument resolver instead of the resolved value. |
-| `init(app)` | Optional module lifecycle hook. Ordinary sync/async callables and sync/async generators are supported; generator cleanup runs during application shutdown. |
+| `init(app)` | Optional module lifecycle hook. Sync/async generators provide awaited setup and shutdown cleanup; ordinary callables run as background tasks. |
 
 Dependency providers may themselves declare event parameters and dependencies.
 Within one matched handler graph, each provider callable is resolved once.
 Independent eager providers run concurrently, while generators and context
-managers are released in reverse acquisition order through one
-`AsyncExitStack`.
+managers are released automatically in reverse acquisition order.
 
 ### Message builders
 
@@ -742,11 +715,8 @@ constructors.
 | `Card.tuwen(*, title, description, url, pic_url)` | Card descriptor containing a title, description, destination URL, and image URL. |
 | `MessageReference(message_id=...)` | Adds a reference to another message. |
 
-`Media.image()` uses overloads to require `file_name` for `data=...` and allow
-it to be omitted for `url=...`. The implementation retains
-`file_name: str | None = None`; the overloads guide editors and type checkers.
-The builder creates the descriptor without parameter validation or uploading.
-Byte uploads through the send methods use the caller-supplied file name.
+Media builders create descriptors; sending methods perform the upload. Supply
+`file_name` with byte content. A remote `url` can be used without a file name.
 
 Every `Message` constructor also accepts the applicable `msg_id`, `event_id`,
 `msg_seq`, `message_reference`, and `is_wakeup` fields. Normally
@@ -1110,11 +1080,11 @@ their concrete modules:
 | Event | Typed data and convenience operations |
 | --- | --- |
 | [`C2CMessageCreateEvent`](src/oibot/event/c2c_message_create.py) | `id`, `content`, `timestamp`, `author`, `attachments`, `message_scene`, `message_type`, and optional `ark_data`; supports `reply(str \| Message)` and `chat(...)`. |
-| [`GroupAtMessageCreateEvent`](src/oibot/event/group_at_message_create.py) | At-mention message with `group_openid`, author, mentions, attachments, scene, type, optional Ark data, and recursively parsed `msg_elements`; supports `reply(...)` and `chat(...)`. |
+| [`GroupAtMessageCreateEvent`](src/oibot/event/group_at_message_create.py) | At-mention message with `group_openid`, author, mentions, attachments, scene, type, optional Ark data, and recursively parsed `msg_elements`; supports `reply(...)` and `chat(...)`, including `quote=True`. |
 | [`GroupMessageCreateEvent`](src/oibot/event/group_message_create.py) | Full group-message counterpart to `GroupAtMessageCreateEvent`, including nested message elements and the same conversation helpers. |
 | [`InteractionCreateEvent`](src/oibot/event/interaction_create.py) | Typed interaction `type`, `scene`, `chat_type`, `timestamp`, and resolved data. `button_data` decodes callback JSON, `button_id` exposes its ID, and `acknowledge(code)` acknowledges the result. |
 | `C2CInteractionCreateEvent` | Adds `user_openid` plus C2C `reply(...)` and `chat(...)`. |
-| `GroupInteractionCreateEvent` | Adds `group_openid` and `group_member_openid` plus group `reply(...)` and `chat(...)`. |
+| `GroupInteractionCreateEvent` | Adds `group_openid` and `group_member_openid` plus group `reply(...)` and `chat(...)`, without a `quote` parameter. |
 | `GuildInteractionCreateEvent` | Adds `guild_id` and `channel_id` for guild-scene interactions. |
 | [`GroupJoinRequestEvent`](src/oibot/event/group_join_request.py) | Request, group and member IDs, source, apply time, optional risk, inviter, verification, and automatic-strategy data; supports `approve()` and `decline(...)`. |
 | [`FriendAddEvent`](src/oibot/event/friend_add.py) / [`FriendDelEvent`](src/oibot/event/friend_del.py) | Friend open ID, typed author and timestamp; add events can `reply(Message)`. |
@@ -1149,8 +1119,8 @@ catch-all handler can observe protocol additions without breaking dispatch.
 - **An API method has no client session:** call it from a running transport or
   inside `async with OiBot(...)`.
 - **A dependency is not resolved:** declare it as a parameter default with
-  `Dependency.from_provider(...)` and keep the event annotation on the handler
-  or provider.
+  `Dependency.from_provider(...)` and keep an event-typed parameter on the
+  handler. Providers may additionally request the event by annotation.
 
 Keep application credentials in environment variables or a secret manager; do
 not commit them to source control. In production, expose Webhook endpoints over

@@ -2,7 +2,7 @@ import asyncio
 from collections.abc import Awaitable, Callable, Coroutine
 from functools import reduce, wraps
 from inspect import iscoroutinefunction
-from operator import and_, or_
+from operator import and_, lshift, or_, rshift
 from typing import Any, overload
 
 
@@ -117,7 +117,7 @@ class Matcher[**P]:
                     for task in pending:
                         task.cancel()
 
-                    await asyncio.gather(*pending, return_exceptions=True)
+                    await asyncio.gather(*tasks, return_exceptions=True)
 
                 return ctx
 
@@ -174,7 +174,7 @@ class Matcher[**P]:
                     for task in pending:
                         task.cancel()
 
-                    await asyncio.gather(*pending, return_exceptions=True)
+                    await asyncio.gather(*tasks, return_exceptions=True)
 
                 return {}
         else:
@@ -205,6 +205,52 @@ class Matcher[**P]:
                 return not await self(*args, **kwargs)
 
         return Matcher(rule=wrapper, awaitable=self.awaitable)
+
+    def __lshift__[**Q](self, other: Matcher[Q]) -> Matcher[Q]:
+        matchers = [
+            *(other.matchers if other.operator is lshift else [other]),
+            *(self.matchers if self.operator is lshift else [self]),
+        ]
+
+        async def wrapper(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            for matcher in matchers:
+                matched = (
+                    await matcher(*args, **kwargs)
+                    if matcher.awaitable
+                    else matcher(*args, **kwargs)
+                )
+
+                if not matched:
+                    return {}
+
+                kwargs |= matched if isinstance(matched, dict) else {"_": matched}
+
+            return kwargs
+
+        return Matcher(rule=wrapper, matchers=matchers, operator=lshift)
+
+    def __rshift__(self, other: Matcher[...]) -> Matcher[P]:
+        matchers = [
+            *(self.matchers if self.operator is rshift else [self]),
+            *(other.matchers if other.operator is rshift else [other]),
+        ]
+
+        async def wrapper(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            for matcher in matchers:
+                matched = (
+                    await matcher(*args, **kwargs)
+                    if matcher.awaitable
+                    else matcher(*args, **kwargs)
+                )
+
+                if not matched:
+                    return {}
+
+                kwargs |= matched if isinstance(matched, dict) else {"_": matched}
+
+            return kwargs
+
+        return Matcher(rule=wrapper, matchers=matchers, operator=rshift)
 
     async def match(self, *args: P.args, **kwargs: P.kwargs) -> dict[str, Any]:
         if matched := (

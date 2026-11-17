@@ -110,6 +110,6 @@ class WebhookMixin:
                 )
 
             case _:
-                logging.warning("invalid type received op=%r", ctx["op"])
+                logging.warning(f"invalid type received op={ctx['op']!r}")
 
         return web.Response(body=None, status=HTTPStatus.OK)
